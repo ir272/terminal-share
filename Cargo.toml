@@ -1,0 +1,38 @@
+[package]
+name = "termshare"
+version = "0.1.0"
+edition = "2024"
+description = "Share your terminal with others in real-time"
+license = "MIT"
+
+[dependencies]
+# PTY (pseudo-terminal) handling - cross-platform
+portable-pty = "0.8"
+
+# Terminal manipulation (raw mode, events, etc.)
+crossterm = "0.28"
+
+# Ergonomic error handling
+anyhow = "1.0"
+
+# Async runtime
+tokio = { version = "1", features = ["full"] }
+
+# Web server with WebSocket support
+axum = { version = "0.7", features = ["ws"] }
+tower-http = { version = "0.5", features = ["fs", "cors"] }
+
+# Serialization for messages
+serde = { version = "1.0", features = ["derive"] }
+serde_json = "1.0"
+
+# Unique session IDs
+uuid = { version = "1.0", features = ["v4"] }
+
+# Logging
+tracing = "0.1"
+tracing-subscriber = { version = "0.3", features = ["env-filter"] }
+
+# Async channels for broadcasting
+tokio-stream = "0.1"
+futures = "0.3"
