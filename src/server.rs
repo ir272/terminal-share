@@ -8,14 +8,16 @@
 use axum::{
     extract::{
         ws::{Message, WebSocket, WebSocketUpgrade},
-        State,
+        Query, State,
     },
-    response::{Html, IntoResponse},
-    routing::get,
+    http::StatusCode,
+    response::{Html, IntoResponse, Json},
+    routing::{get, post},
     Router,
 };
 use futures::{SinkExt, StreamExt};
 use serde::{Deserialize, Serialize};
+use std::collections::HashSet;
 use std::sync::Arc;
 use tokio::sync::{broadcast, RwLock};
 
@@ -41,6 +43,26 @@ pub enum ClientMessage {
     RequestControl,
 }
 
+/// Authentication request from viewer
+#[derive(Debug, Deserialize)]
+pub struct AuthRequest {
+    password: String,
+}
+
+/// Authentication response to viewer
+#[derive(Debug, Serialize)]
+pub struct AuthResponse {
+    success: bool,
+    token: Option<String>,
+    message: String,
+}
+
+/// Query params for checking auth status
+#[derive(Debug, Deserialize)]
+pub struct AuthQuery {
+    token: Option<String>,
+}
+
 /// Maximum size of terminal buffer (64KB)
 const MAX_BUFFER_SIZE: usize = 64 * 1024;
 
@@ -58,10 +80,14 @@ pub struct ServerState {
     pub input_tx: tokio::sync::mpsc::Sender<Vec<u8>>,
     /// Buffer storing recent terminal output for new viewers
     pub terminal_buffer: RwLock<Vec<u8>>,
+    /// Optional password for session protection
+    pub password: Option<String>,
+    /// Valid authentication tokens
+    pub valid_tokens: RwLock<HashSet<String>>,
 }
 
 impl ServerState {
-    pub fn new(input_tx: tokio::sync::mpsc::Sender<Vec<u8>>) -> Self {
+    pub fn new(input_tx: tokio::sync::mpsc::Sender<Vec<u8>>, password: Option<String>) -> Self {
         let (output_tx, _) = broadcast::channel(1024);
         let session_id = generate_session_id();
 
@@ -72,7 +98,32 @@ impl ServerState {
             viewer_count: RwLock::new(0),
             input_tx,
             terminal_buffer: RwLock::new(Vec::with_capacity(MAX_BUFFER_SIZE)),
+            password,
+            valid_tokens: RwLock::new(HashSet::new()),
         }
+    }
+
+    /// Check if the session requires authentication
+    pub fn requires_auth(&self) -> bool {
+        self.password.is_some()
+    }
+
+    /// Validate a password and return a token if correct
+    pub async fn authenticate(&self, password: &str) -> Option<String> {
+        if let Some(ref session_password) = self.password {
+            if password == session_password {
+                // Generate a token
+                let token = uuid::Uuid::new_v4().to_string();
+                self.valid_tokens.write().await.insert(token.clone());
+                return Some(token);
+            }
+        }
+        None
+    }
+
+    /// Check if a token is valid
+    pub async fn is_valid_token(&self, token: &str) -> bool {
+        self.valid_tokens.read().await.contains(token)
     }
 
     /// Broadcast terminal output to all viewers and store in buffer
@@ -171,6 +222,8 @@ pub fn create_router(state: Arc<ServerState>) -> Router {
     Router::new()
         .route("/", get(index_handler))
         .route("/ws", get(websocket_handler))
+        .route("/auth", post(auth_handler))
+        .route("/auth/status", get(auth_status_handler))
         .with_state(state)
 }
 
@@ -179,12 +232,91 @@ async fn index_handler() -> impl IntoResponse {
     Html(include_str!("viewer.html"))
 }
 
+/// Handle authentication requests
+async fn auth_handler(
+    State(state): State<Arc<ServerState>>,
+    Json(request): Json<AuthRequest>,
+) -> impl IntoResponse {
+    if !state.requires_auth() {
+        // No password required, auto-authenticate
+        return Json(AuthResponse {
+            success: true,
+            token: Some(String::new()),
+            message: "No authentication required".to_string(),
+        });
+    }
+
+    match state.authenticate(&request.password).await {
+        Some(token) => {
+            tracing::info!("Viewer authenticated successfully");
+            Json(AuthResponse {
+                success: true,
+                token: Some(token),
+                message: "Authentication successful".to_string(),
+            })
+        }
+        None => {
+            tracing::warn!("Failed authentication attempt");
+            Json(AuthResponse {
+                success: false,
+                token: None,
+                message: "Invalid password".to_string(),
+            })
+        }
+    }
+}
+
+/// Check authentication status
+async fn auth_status_handler(
+    State(state): State<Arc<ServerState>>,
+    Query(query): Query<AuthQuery>,
+) -> impl IntoResponse {
+    #[derive(Serialize)]
+    struct StatusResponse {
+        requires_auth: bool,
+        authenticated: bool,
+    }
+
+    let requires_auth = state.requires_auth();
+    let authenticated = if requires_auth {
+        if let Some(token) = query.token {
+            state.is_valid_token(&token).await
+        } else {
+            false
+        }
+    } else {
+        true // No auth required means everyone is authenticated
+    };
+
+    Json(StatusResponse {
+        requires_auth,
+        authenticated,
+    })
+}
+
+/// Query params for WebSocket connection
+#[derive(Debug, Deserialize)]
+pub struct WsQuery {
+    token: Option<String>,
+}
+
 /// Handle WebSocket connections
 async fn websocket_handler(
     ws: WebSocketUpgrade,
     State(state): State<Arc<ServerState>>,
-) -> impl IntoResponse {
-    ws.on_upgrade(move |socket| handle_socket(socket, state))
+    Query(query): Query<WsQuery>,
+) -> Result<impl IntoResponse, StatusCode> {
+    // Check authentication if required
+    if state.requires_auth() {
+        let authenticated = match query.token {
+            Some(ref token) if !token.is_empty() => state.is_valid_token(token).await,
+            _ => false,
+        };
+        if !authenticated {
+            return Err(StatusCode::UNAUTHORIZED);
+        }
+    }
+    Ok(ws.on_upgrade(move |socket| handle_socket(socket, state)))
 }
 
 /// Handle an individual WebSocket connection

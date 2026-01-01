@@ -36,3 +36,9 @@ tracing-subscriber = { version = "0.3", features = ["env-filter"] }
 # Async channels for broadcasting
 tokio-stream = "0.1"
 futures = "0.3"
+
+# CLI argument parsing
+clap = { version = "4", features = ["derive"] }
+
+# Password input (hidden)
+rpassword = "7"

@@ -8,6 +8,7 @@ mod server;
 mod terminal;
 
 use anyhow::Result;
+use clap::Parser;
 use std::io::Read;
 use std::sync::Arc;
 use std::thread;
@@ -19,27 +20,61 @@ use crate::terminal::{read_event, write_stdout, RawModeGuard, TerminalEvent};
 
 const DEFAULT_PORT: u16 = 3001;
 
+/// TermShare - Share your terminal with others in real-time
+#[derive(Parser, Debug)]
+#[command(name = "termshare")]
+#[command(version = "0.1.0")]
+#[command(about = "Share your terminal with others in real-time")]
+struct Args {
+    /// Port to run the server on
+    #[arg(short, long, default_value_t = DEFAULT_PORT)]
+    port: u16,
+
+    /// Require password to view the session
+    #[arg(long)]
+    password: bool,
+}
+
 #[tokio::main]
 async fn main() -> Result<()> {
+    // Parse CLI arguments
+    let args = Args::parse();
+
     // Initialize logging
     tracing_subscriber::fmt()
         .with_env_filter("termshare=info")
         .with_writer(std::io::stderr)
         .init();
 
+    // Get password if requested
+    let password = if args.password {
+        println!("Enter session password: ");
+        let pass = rpassword::read_password()?;
+        if pass.is_empty() {
+            println!("Warning: Empty password provided. Session will be unprotected.");
+            None
+        } else {
+            Some(pass)
+        }
+    } else {
+        None
+    };
+
     // Create channel for viewer input
     let (viewer_input_tx, viewer_input_rx) = tokio::sync::mpsc::channel::<Vec<u8>>(100);
 
-    // Create server state
-    let state = Arc::new(ServerState::new(viewer_input_tx));
+    // Create server state with optional password
+    let state = Arc::new(ServerState::new(viewer_input_tx, password.clone()));
     let session_id = state.session_id.clone();
 
     // Print startup banner
+    println!();
     println!("TermShare v0.1.0 - Terminal Sharing Tool");
     println!("=========================================");
     println!();
-    println!("Share URL: http://localhost:{}", DEFAULT_PORT);
+    println!("Share URL: http://localhost:{}", args.port);
     println!("Session ID: {}", session_id);
+    println!("Password protected: {}", if password.is_some() { "Yes" } else { "No" });
     println!();
     println!("Starting shell session...");
     println!("Press Ctrl+Q to exit");
@@ -47,8 +82,9 @@ async fn main() -> Result<()> {
 
     // Start web server in background
     let server_state = state.clone();
+    let port = args.port;
     tokio::spawn(async move {
-        if let Err(e) = server::start_server(server_state, DEFAULT_PORT).await {
+        if let Err(e) = server::start_server(server_state, port).await {
             tracing::error!("Server error: {}", e);
         }
     });

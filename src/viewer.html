@@ -119,6 +119,7 @@
             border-radius: 12px;
             text-align: center;
             max-width: 400px;
+            min-width: 300px;
         }
 
         .overlay-content h2 {
@@ -144,6 +145,60 @@
         @keyframes spin {
             to { transform: rotate(360deg); }
         }
+
+        /* Password form styles */
+        .auth-form {
+            display: flex;
+            flex-direction: column;
+            gap: 15px;
+        }
+
+        .auth-form input {
+            padding: 12px 16px;
+            border: 2px solid #0f3460;
+            border-radius: 8px;
+            background: #1a1a2e;
+            color: #eee;
+            font-size: 1rem;
+            outline: none;
+            transition: border-color 0.2s;
+        }
+
+        .auth-form input:focus {
+            border-color: #e94560;
+        }
+
+        .auth-form button {
+            padding: 12px 24px;
+            border: none;
+            border-radius: 8px;
+            background: #e94560;
+            color: white;
+            font-size: 1rem;
+            font-weight: 600;
+            cursor: pointer;
+            transition: background 0.2s;
+        }
+
+        .auth-form button:hover {
+            background: #d63850;
+        }
+
+        .auth-form button:disabled {
+            background: #666;
+            cursor: not-allowed;
+        }
+
+        .error-message {
+            color: #f87171;
+            font-size: 0.9rem;
+            margin-top: 10px;
+        }
+
+        .lock-icon {
+            font-size: 3rem;
+            margin-bottom: 15px;
+        }
     </style>
 </head>
 <body>
@@ -164,20 +219,38 @@
 
     <footer class="footer">
         Viewing a shared terminal session &bull;
-        <a href="https://github.com/your-repo/termshare">TermShare</a>
+        <a href="https://github.com/ir272/terminal-share">TermShare</a>
     </footer>
 
+    <!-- Loading/Connecting overlay -->
     <div class="overlay" id="overlay">
-        <div class="overlay-content">
+        <div class="overlay-content" id="overlay-content">
             <h2>Connecting...</h2>
             <p>Establishing connection to terminal session</p>
             <div class="spinner"></div>
         </div>
     </div>
 
+    <!-- Password overlay (hidden by default) -->
+    <div class="overlay hidden" id="auth-overlay">
+        <div class="overlay-content">
+            <div class="lock-icon">🔒</div>
+            <h2>Password Required</h2>
+            <p>This terminal session is password protected</p>
+            <form class="auth-form" id="auth-form">
+                <input type="password" id="password-input" placeholder="Enter password" autocomplete="off" autofocus>
+                <button type="submit" id="auth-button">Enter Session</button>
+            </form>
+            <div class="error-message hidden" id="auth-error"></div>
+        </div>
+    </div>
+
     <script src="https://cdn.jsdelivr.net/npm/xterm@5.3.0/lib/xterm.min.js"></script>
     <script src="https://cdn.jsdelivr.net/npm/xterm-addon-fit@0.8.0/lib/xterm-addon-fit.min.js"></script>
     <script>
+        // Auth token storage
+        let authToken = localStorage.getItem('termshare_token') || '';
+
         // Initialize xterm.js
         const term = new Terminal({
             cursorBlink: true,
@@ -204,6 +277,12 @@
 
         // UI elements
         const overlay = document.getElementById('overlay');
+        const overlayContent = document.getElementById('overlay-content');
+        const authOverlay = document.getElementById('auth-overlay');
+        const authForm = document.getElementById('auth-form');
+        const authError = document.getElementById('auth-error');
+        const passwordInput = document.getElementById('password-input');
+        const authButton = document.getElementById('auth-button');
         const statusDot = document.getElementById('status-dot');
         const statusText = document.getElementById('status-text');
         const viewerCount = document.getElementById('viewer-count');
@@ -215,8 +294,87 @@
         let reconnectAttempts = 0;
         const maxReconnectAttempts = 5;
 
+        // Check auth status on load
+        async function checkAuthStatus() {
+            try {
+                const response = await fetch(`/auth/status?token=${encodeURIComponent(authToken)}`);
+                const data = await response.json();
+
+                if (data.requires_auth && !data.authenticated) {
+                    // Show password form
+                    overlay.classList.add('hidden');
+                    authOverlay.classList.remove('hidden');
+                    passwordInput.focus();
+                } else {
+                    // No auth required or already authenticated
+                    connect();
+                }
+            } catch (e) {
+                console.error('Failed to check auth status:', e);
+                // Show error - don't bypass auth
+                overlay.classList.remove('hidden');
+                overlayContent.innerHTML = `
+                    <h2>Connection Error</h2>
+                    <p>Failed to connect to the server. Please refresh to try again.</p>
+                `;
+            }
+        }
+
+        // Handle password form submission
+        authForm.addEventListener('submit', async (e) => {
+            e.preventDefault();
+            const password = passwordInput.value;
+
+            if (!password) {
+                showAuthError('Please enter a password');
+                return;
+            }
+
+            authButton.disabled = true;
+            authButton.textContent = 'Authenticating...';
+            authError.classList.add('hidden');
+
+            try {
+                const response = await fetch('/auth', {
+                    method: 'POST',
+                    headers: {
+                        'Content-Type': 'application/json',
+                    },
+                    body: JSON.stringify({ password }),
+                });
+
+                const data = await response.json();
+
+                if (data.success) {
+                    // Store token and connect
+                    authToken = data.token || '';
+                    localStorage.setItem('termshare_token', authToken);
+                    authOverlay.classList.add('hidden');
+                    overlay.classList.remove('hidden');
+                    connect();
+                } else {
+                    showAuthError(data.message || 'Invalid password');
+                    passwordInput.value = '';
+                    passwordInput.focus();
+                }
+            } catch (e) {
+                console.error('Auth error:', e);
+                showAuthError('Authentication failed. Please try again.');
+            } finally {
+                authButton.disabled = false;
+                authButton.textContent = 'Enter Session';
+            }
+        });
+
+        function showAuthError(message) {
+            authError.textContent = message;
+            authError.classList.remove('hidden');
+        }
+
         function connect() {
-            ws = new WebSocket(wsUrl);
+            // Include auth token in WebSocket URL
+            const wsUrlWithToken = authToken ? `${wsUrl}?token=${encodeURIComponent(authToken)}` : wsUrl;
+            ws = new WebSocket(wsUrlWithToken);
 
             ws.onopen = () => {
                 console.log('Connected to terminal session');
@@ -249,9 +407,10 @@
                     statusText.textContent = `Reconnecting (${reconnectAttempts}/${maxReconnectAttempts})...`;
                 } else {
                     overlay.classList.remove('hidden');
-                    overlay.querySelector('h2').textContent = 'Disconnected';
-                    overlay.querySelector('p').textContent = 'The terminal session has ended or connection was lost.';
-                    overlay.querySelector('.spinner').style.display = 'none';
+                    overlayContent.innerHTML = `
+                        <h2>Disconnected</h2>
+                        <p>The terminal session has ended or connection was lost.</p>
+                    `;
                 }
             };
 
@@ -291,13 +450,8 @@
             }
         }
 
-        // Optional: Allow viewer input (can be enabled/disabled by host)
-        // term.onData((data) => {
-        //     sendInput(data);
-        // });
-
-        // Start connection
-        connect();
+        // Start by checking auth status
+        checkAuthStatus();
     </script>
 </body>
 </html>
