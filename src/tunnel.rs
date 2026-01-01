@@ -1,6 +1,6 @@
 use anyhow::{anyhow, Context, Result};
 use regex::Regex;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::process::Stdio;
 use tokio::io::{AsyncBufReadExt, BufReader};
 use tokio::process::{Child, Command};
@@ -114,14 +114,14 @@ fn get_cache_dir() -> Result<PathBuf> {
     Ok(base.join("termshare").join("bin"))
 }
 
-fn get_binary_path(cache_dir: &PathBuf) -> PathBuf {
+fn get_binary_path(cache_dir: &Path) -> PathBuf {
     #[cfg(windows)]
     { cache_dir.join("cloudflared.exe") }
     #[cfg(not(windows))]
     { cache_dir.join("cloudflared") }
 }
 
-async fn download_cloudflared(cache_dir: &PathBuf) -> Result<()> {
+async fn download_cloudflared(cache_dir: &Path) -> Result<()> {
     tokio::fs::create_dir_all(cache_dir).await?;
 
     let (download_url, is_tgz) = get_download_url()?;
@@ -157,7 +157,7 @@ async fn download_cloudflared(cache_dir: &PathBuf) -> Result<()> {
     Ok(())
 }
 
-async fn extract_tgz(data: &[u8], dest: &PathBuf) -> Result<()> {
+async fn extract_tgz(data: &[u8], dest: &Path) -> Result<()> {
     use std::io::Cursor;
     use flate2::read::GzDecoder;
     use tar::Archive;

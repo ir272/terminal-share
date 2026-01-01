@@ -66,11 +66,11 @@ fn key_event_to_bytes(key_event: KeyEvent) -> Option<Vec<u8>> {
     } = key_event;
 
     // Ctrl+key: Ctrl+A = 0x01, Ctrl+B = 0x02, etc.
-    if modifiers.contains(KeyModifiers::CONTROL) {
-        if let KeyCode::Char(c) = code {
-            let ctrl_char = (c.to_ascii_lowercase() as u8).wrapping_sub(b'a' - 1);
-            return Some(vec![ctrl_char]);
-        }
+    if modifiers.contains(KeyModifiers::CONTROL)
+        && let KeyCode::Char(c) = code
+    {
+        let ctrl_char = (c.to_ascii_lowercase() as u8).wrapping_sub(b'a' - 1);
+        return Some(vec![ctrl_char]);
     }
 
     match code {
@@ -99,7 +99,7 @@ fn key_event_to_bytes(key_event: KeyEvent) -> Option<Vec<u8>> {
         KeyCode::F(2) => Some(b"\x1bOQ".to_vec()),
         KeyCode::F(3) => Some(b"\x1bOR".to_vec()),
         KeyCode::F(4) => Some(b"\x1bOS".to_vec()),
-        KeyCode::F(n) if n >= 5 && n <= 12 => {
+        KeyCode::F(n) if (5..=12).contains(&n) => {
             let seq = match n {
                 5 => b"\x1b[15~".to_vec(),
                 6 => b"\x1b[17~".to_vec(),

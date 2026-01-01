@@ -102,12 +102,12 @@ impl ServerState {
     }
 
     pub async fn authenticate(&self, password: &str) -> Option<String> {
-        if let Some(ref session_password) = self.password {
-            if password == session_password {
-                let token = uuid::Uuid::new_v4().to_string();
-                self.valid_tokens.write().await.insert(token.clone());
-                return Some(token);
-            }
+        if let Some(ref session_password) = self.password
+            && password == session_password
+        {
+            let token = uuid::Uuid::new_v4().to_string();
+            self.valid_tokens.write().await.insert(token.clone());
+            return Some(token);
         }
         None
     }
@@ -152,7 +152,7 @@ fn base64_encode(data: &[u8]) -> String {
     let mut buf = Vec::new();
     let mut encoder = Base64Encoder::new(&mut buf);
     encoder.write_all(data).unwrap();
-    drop(encoder);
+    encoder.flush().unwrap();
     String::from_utf8(buf).unwrap()
 }
 
@@ -280,10 +280,10 @@ async fn websocket_handler(
         }
     }
 
-    if let Some(max) = state.max_viewers {
-        if *state.viewer_count.read().await >= max {
-            return Err(StatusCode::SERVICE_UNAVAILABLE);
-        }
+    if let Some(max) = state.max_viewers
+        && *state.viewer_count.read().await >= max
+    {
+        return Err(StatusCode::SERVICE_UNAVAILABLE);
     }
 
     Ok(ws.on_upgrade(move |socket| handle_socket(socket, state)))
@@ -311,17 +311,17 @@ async fn handle_socket(socket: WebSocket, state: Arc<ServerState>) {
         viewers: viewer_count,
         input_allowed: state.allow_input,
     };
-    let _ = sender.send(Message::Text(serde_json::to_string(&info_msg).unwrap().into())).await;
+    let _ = sender.send(Message::Text(serde_json::to_string(&info_msg).unwrap())).await;
 
     let resize_msg = ServerMessage::Resize { cols, rows };
-    let _ = sender.send(Message::Text(serde_json::to_string(&resize_msg).unwrap().into())).await;
+    let _ = sender.send(Message::Text(serde_json::to_string(&resize_msg).unwrap())).await;
 
     // Send buffered content so new viewers see existing terminal state
     let buffer = state.get_buffer().await;
     if !buffer.is_empty() {
         let encoded = base64_encode(&buffer);
         let buffer_msg = ServerMessage::Output { data: encoded };
-        let _ = sender.send(Message::Text(serde_json::to_string(&buffer_msg).unwrap().into())).await;
+        let _ = sender.send(Message::Text(serde_json::to_string(&buffer_msg).unwrap())).await;
     }
 
     let state_clone = state.clone();
@@ -330,7 +330,7 @@ async fn handle_socket(socket: WebSocket, state: Arc<ServerState>) {
     let send_task = tokio::spawn(async move {
         while let Ok(msg) = rx.recv().await {
             let text = serde_json::to_string(&msg).unwrap();
-            if sender.send(Message::Text(text.into())).await.is_err() {
+            if sender.send(Message::Text(text)).await.is_err() {
                 break;
             }
         }
@@ -338,19 +338,19 @@ async fn handle_socket(socket: WebSocket, state: Arc<ServerState>) {
 
     let recv_task = tokio::spawn(async move {
         while let Some(Ok(msg)) = receiver.next().await {
-            if let Message::Text(text) = msg {
-                if let Ok(client_msg) = serde_json::from_str::<ClientMessage>(&text) {
-                    match client_msg {
-                        ClientMessage::Input { data } => {
-                            if allow_input {
-                                if let Ok(bytes) = base64_decode(&data) {
-                                    let _ = state_clone.input_tx.send(bytes).await;
-                                }
-                            }
+            if let Message::Text(text) = msg
+                && let Ok(client_msg) = serde_json::from_str::<ClientMessage>(&text)
+            {
+                match client_msg {
+                    ClientMessage::Input { data } => {
+                        if allow_input
+                            && let Ok(bytes) = base64_decode(&data)
+                        {
+                            let _ = state_clone.input_tx.send(bytes).await;
                         }
-                        ClientMessage::RequestControl => {
-                            tracing::info!("Viewer requested control");
-                        }
+                    }
+                    ClientMessage::RequestControl => {
+                        tracing::info!("Viewer requested control");
                     }
                 }
             }
