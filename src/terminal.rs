@@ -8,7 +8,7 @@
 use anyhow::{Context, Result};
 use crossterm::{
     event::{self, Event, KeyCode, KeyEvent, KeyModifiers},
-    terminal::{self, disable_raw_mode, enable_raw_mode},
+    terminal::{disable_raw_mode, enable_raw_mode},
 };
 use std::io::{self, Write};
 use std::time::Duration;
@@ -164,9 +164,4 @@ pub fn write_stdout(data: &[u8]) -> Result<()> {
     stdout.write_all(data).context("Failed to write to stdout")?;
     stdout.flush().context("Failed to flush stdout")?;
     Ok(())
-}
-
-/// Get current terminal size
-pub fn get_size() -> Result<(u16, u16)> {
-    terminal::size().context("Failed to get terminal size")
 }

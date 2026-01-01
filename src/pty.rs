@@ -20,8 +20,6 @@ pub struct PtySession {
     pair: PtyPair,
     /// Writer to send input to the shell
     writer: Box<dyn Write + Send>,
-    /// Reader to receive output from the shell
-    reader: Box<dyn Read + Send>,
 }
 
 impl PtySession {
@@ -61,16 +59,13 @@ impl PtySession {
             .spawn_command(cmd)
             .context("Failed to spawn command")?;
 
-        // Get handles to read from and write to the PTY
+        // Get handle to write to the PTY
         let writer = pair.master.take_writer()
             .context("Failed to get PTY writer")?;
-        let reader = pair.master.try_clone_reader()
-            .context("Failed to get PTY reader")?;
 
         Ok(Self {
             pair,
             writer,
-            reader,
         })
     }
 
@@ -101,17 +96,6 @@ impl PtySession {
             .flush()
             .context("Failed to flush PTY writer")?;
         Ok(())
-    }
-
-    /// Read output from the shell
-    ///
-    /// This reads whatever the shell has output (command results, prompts, etc.)
-    /// into the provided buffer. Returns the number of bytes read.
-    pub fn read(&mut self, buf: &mut [u8]) -> Result<usize> {
-        let n = self.reader
-            .read(buf)
-            .context("Failed to read from PTY")?;
-        Ok(n)
     }
 
     /// Get a clone of the reader for use in another thread

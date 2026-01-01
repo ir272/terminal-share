@@ -21,13 +21,6 @@ pub struct Tunnel {
     process: Child,
 }
 
-impl Tunnel {
-    /// Gracefully shut down the tunnel
-    pub async fn shutdown(mut self) {
-        let _ = self.process.kill().await;
-    }
-}
-
 impl Drop for Tunnel {
     fn drop(&mut self) {
         // Best effort kill on drop (can't await in drop)
