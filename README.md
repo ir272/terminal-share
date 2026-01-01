@@ -41,14 +41,18 @@ This starts a web server and gives you a URL. Anyone with the link can watch you
 # Password protected with viewer input
 termshare --public --password --allow-input
 
-#Then in the shared terminal:
+# Then in the shared terminal:
+
 cd ~/projects/project-name
 npm run dev
+
 # Ctrl+C to stop npm (session stays alive)
 
 # Start sharing specific commands!
+
 git status
 git commit
+
 # etc...
 ```
 
