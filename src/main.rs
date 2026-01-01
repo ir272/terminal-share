@@ -17,7 +17,7 @@ use crate::pty::PtySession;
 use crate::server::ServerState;
 use crate::terminal::{read_event, write_stdout, RawModeGuard, TerminalEvent};
 
-const DEFAULT_PORT: u16 = 3000;
+const DEFAULT_PORT: u16 = 3001;
 
 #[tokio::main]
 async fn main() -> Result<()> {
@@ -107,8 +107,8 @@ async fn run_session(
             // Display locally
             write_stdout(&output)?;
 
-            // Broadcast to viewers
-            state.broadcast_output(&output);
+            // Broadcast to viewers (and store in buffer)
+            state.broadcast_output(&output).await;
         }
 
         // Check for viewer input (non-blocking)

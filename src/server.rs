@@ -41,6 +41,9 @@ pub enum ClientMessage {
     RequestControl,
 }
 
+/// Maximum size of terminal buffer (64KB)
+const MAX_BUFFER_SIZE: usize = 64 * 1024;
+
 /// Shared state for the server
 pub struct ServerState {
     /// Session ID for this sharing session
@@ -53,6 +56,8 @@ pub struct ServerState {
     pub viewer_count: RwLock<usize>,
     /// Channel to send input from viewers to the PTY
     pub input_tx: tokio::sync::mpsc::Sender<Vec<u8>>,
+    /// Buffer storing recent terminal output for new viewers
+    pub terminal_buffer: RwLock<Vec<u8>>,
 }
 
 impl ServerState {
@@ -66,14 +71,32 @@ impl ServerState {
             terminal_size: RwLock::new((80, 24)),
             viewer_count: RwLock::new(0),
             input_tx,
+            terminal_buffer: RwLock::new(Vec::with_capacity(MAX_BUFFER_SIZE)),
         }
     }
 
-    /// Broadcast terminal output to all viewers
-    pub fn broadcast_output(&self, data: &[u8]) {
+    /// Broadcast terminal output to all viewers and store in buffer
+    pub async fn broadcast_output(&self, data: &[u8]) {
+        // Store in buffer for new viewers
+        {
+            let mut buffer = self.terminal_buffer.write().await;
+            buffer.extend_from_slice(data);
+
+            // Trim buffer if it exceeds max size (keep the most recent data)
+            if buffer.len() > MAX_BUFFER_SIZE {
+                let excess = buffer.len() - MAX_BUFFER_SIZE;
+                buffer.drain(0..excess);
+            }
+        }
+
         // Convert to base64 for safe JSON transmission of binary data
         let encoded = base64_encode(data);
         let _ = self.output_tx.send(ServerMessage::Output { data: encoded });
+    }
+
+    /// Get the current terminal buffer contents (for new viewers)
+    pub async fn get_buffer(&self) -> Vec<u8> {
+        self.terminal_buffer.read().await.clone()
     }
 
     /// Broadcast terminal resize to all viewers
@@ -192,6 +215,14 @@ async fn handle_socket(socket: WebSocket, state: Arc<ServerState>) {
     // Send current terminal size
     let resize_msg = ServerMessage::Resize { cols, rows };
     let _ = sender.send(Message::Text(serde_json::to_string(&resize_msg).unwrap().into())).await;
+
+    // Send buffered terminal content so viewer can see existing state
+    let buffer = state.get_buffer().await;
+    if !buffer.is_empty() {
+        let encoded = base64_encode(&buffer);
+        let buffer_msg = ServerMessage::Output { data: encoded };
+        let _ = sender.send(Message::Text(serde_json::to_string(&buffer_msg).unwrap().into())).await;
+    }
 
     // Clone state for the receiver task
     let state_clone = state.clone();
